@@ -3,4 +3,4 @@ scikit-learn==1.5.2
 joblib
 numpy
 pandas
-catboost
+catboost==1.2.0
