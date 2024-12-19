@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pickle
 import joblib
 
 #st.title("🚗 FLIGHT DELAY PREDICTION 🚗")
@@ -13,7 +12,9 @@ origin_airport_options.sort()
 destination_airport_options = airport_df['destination_city'].dropna().unique().tolist()
 destination_airport_options.sort()
 
+# Load the pre-trained model
 model = joblib.load('CatBoost_model.pkl')
+    
     
 ## Dictionary for carrier code
 carrier_names = ["American Airlines (AA)", "Alaska Airlines (AS)", "JetBlue Airways (B6)", "Delta Air Lines (DL)", "Frontier Airlines (F9)", 
@@ -107,8 +108,11 @@ else:
 filtered_df  = airport_df[
     (airport_df["origin_city"] == origin_city) &
     (airport_df["destination_city"] == destination_city)]
+
 if not filtered_df.empty:
     scheduled_elapsed_time = filtered_df["time_flights"].iloc[0]
+else:
+    scheduled_elapsed_time = 0
 
 year = st.number_input("Year", min_value=2000, step=1, value=2024)
 month = st.number_input("Month", min_value=1, max_value=12, step=1, value=1)
@@ -171,15 +175,45 @@ if st.button("Show Input Summary"):
     st.write(input_df)
     
 # Xử lý data
-input_data['carrier_code'] = carrier_code_dict[carrier_code]
+# input_data['carrier_code'] = carrier_code_dict[carrier_code]
 
-origin_airport = airport_df[airport_df['origin_city'] == origin_city]['origin_airport'].iloc[0]
-input_data['origin_airport'] = airport_dict[origin_airport]
+if carrier_code in carrier_code_dict:
+    input_data['carrier_code'] = carrier_code_dict[carrier_code]
+else:
+    # Handle the case where the carrier_code is missing or invalid
+    input_data['carrier_code'] = None  # Or provide a default value
+    
+    
+# origin_airport = airport_df[airport_df['origin_city'] == origin_city]['origin_airport'].iloc[0]
+# input_data['origin_airport'] = airport_dict[origin_airport]
 
+filtered_origin_df = airport_df[airport_df['origin_city'] == origin_city]
 
-destination_airport = airport_df[airport_df['destination_city'] == destination_city]['destination_airport'].iloc[0]
-input_data['destination_airport'] = airport_dict[destination_airport]
+# Check if the filtered DataFrame is empty
+if not filtered_origin_df.empty:
+    # Get the origin airport from the filtered DataFrame
+    origin_airport = filtered_origin_df['origin_airport'].iloc[0]
+    input_data['origin_airport'] = airport_dict[origin_airport]
+else:
+    # Handle the case where no matching origin city is found
+    origin_airport = None
+    input_data['origin_airport'] = None
 
+# destination_airport = airport_df[airport_df['destination_city'] == destination_city]['destination_airport'].iloc[0]
+# input_data['destination_airport'] = airport_dict[destination_airport]
+
+filtered_df = airport_df[airport_df['destination_city'] == destination_city]
+
+# Check if the filtered DataFrame is empty
+if not filtered_df.empty:
+    # Get the destination airport from the filtered DataFrame
+    destination_airport = filtered_df['destination_airport'].iloc[0]
+    input_data['destination_airport'] = airport_dict[destination_airport]
+else:
+    # Handle the case where no matching destination city is found
+    destination_airport = None
+    input_data['destination_airport'] = None  # Or provide a default value
+    
 input_df = pd.DataFrame([input_data])
    
     
