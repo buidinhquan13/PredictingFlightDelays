@@ -1,15 +1,19 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import folium
+import requests
+
+from datetime import datetime, timedelta, date
 
 #st.title("🚗 FLIGHT DELAY PREDICTION 🚗")
 
 
 airport_df = pd.read_csv('airport_coordinates.csv')
-origin_airport_options = airport_df['origin_city'].dropna().unique().tolist()
+origin_airport_options = airport_df['origin_airport'].dropna().unique().tolist()
 origin_airport_options.sort()
 
-destination_airport_options = airport_df['destination_city'].dropna().unique().tolist()
+destination_airport_options = airport_df['destination_airport'].dropna().unique().tolist()
 destination_airport_options.sort()
 
 # Load the pre-trained model
@@ -81,70 +85,260 @@ airport_dict = {
     'YAK': 360, 'YKM': 361, 'YUM': 362
 }
 
+## ====================================================================================================================================== ##
+
+# Function lấy thời tiết
+API_KEY = 'd3964c6309d0471c84295728241912'
+BASE_URL = 'http://api.weatherapi.com/v1/forecast.json'
+
+def fetch_weather_data(api_key, lat, lon, datetime_obj):
+    # Extract the date and time from the datetime object
+    date = datetime_obj.strftime('%Y-%m-%d')
+    hour = datetime_obj.strftime('%H')
+
+    url = f"{BASE_URL}?key={api_key}&q={lat},{lon}&dt={date}&hour={hour}"
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        data = response.json()
+
+        # Check if the forecast data exists for the specified date and time
+        if "forecast" in data and "forecastday" in data["forecast"]:
+            hour_data = data["forecast"]["forecastday"][0]["hour"][0]
+
+            # Create a dictionary to store the relevant weather information
+            weather_info = {
+                'Visibility': hour_data.get("vis_km", "N/A"),
+                'DryBulbTemperature': hour_data.get("temp_c", "N/A"),
+                'Precipitation': hour_data.get("precip_mm", "N/A"),
+                'StationPressure': hour_data.get("pressure_in", "N/A"),
+                'WindSpeed': hour_data.get("wind_kph", "N/A")
+            }
+            return weather_info
+        else:
+            return None
+    else:
+        return None
+
+def calculate_mean_weather(weather_data_list):
+    # Calculate the mean of all weather parameters
+    mean_weather = {}
+
+    # For each weather parameter (Visibility, DryBulbTemperature, etc.), calculate the mean
+    for key in weather_data_list[0].keys():
+        values = [data.get(key) for data in weather_data_list]
+
+        # Filter out "N/A" and calculate the mean if there are valid values
+        valid_values = [float(value) for value in values if value != "N/A"]
+        if valid_values:
+            mean_weather[key] = sum(valid_values) / len(valid_values)
+        else:
+            mean_weather[key] = "N/A"
+
+    return mean_weather
+
+def extract_mean_weather(api_key, lat, lon, year, month, day, hour, minute):
+    # Create a datetime object for the specified date and time
+    datetime_obj = datetime(year, month, day, hour, minute)
+
+    # Get the weather data for the current time
+    weather_current = fetch_weather_data(api_key, lat, lon, datetime_obj)
+
+    if not weather_current:
+        return None
+
+    # Calculate the times for one hour before and one hour after
+    time_before = datetime_obj - timedelta(hours=1)
+    time_after = datetime_obj + timedelta(hours=1)
+
+    # Get the weather for one hour before
+    weather_before = fetch_weather_data(api_key, lat, lon, time_before)
+
+    # Get the weather for one hour after
+    weather_after = fetch_weather_data(api_key, lat, lon, time_after)
+
+    # Collect all valid weather data
+    weather_data_list = [weather_current]
+    if weather_before:
+        weather_data_list.append(weather_before)
+    if weather_after:
+        weather_data_list.append(weather_after)
+
+    # Calculate the mean weather for current, time_before, and time_after
+    mean_weather = calculate_mean_weather(weather_data_list)
+
+    return (
+        mean_weather['Visibility'],
+        mean_weather['DryBulbTemperature'],
+        mean_weather['Precipitation'],
+        mean_weather['StationPressure'],
+        mean_weather['WindSpeed']
+    )
+
+## ====================================================================================================================================== ##
+
+
+def convert_time(start_date, start_time, elapsed_minutes):
+    # Kết hợp ngày và giờ khởi hành thành datetime
+    start_datetime = datetime.combine(start_date, start_time)
+    elapsed_minutes = int(elapsed_minutes)
+    # Cộng thêm thời gian bay (phút)
+    updated_datetime = start_datetime + timedelta(minutes=elapsed_minutes)
+    
+    # Tách năm, tháng, ngày, giờ, phút từ thời gian cập nhật
+    year = updated_datetime.year
+    month = updated_datetime.month
+    day = updated_datetime.day
+    hour = updated_datetime.hour
+    minute = updated_datetime.minute
+
+    # Trả về các giá trị năm, tháng, ngày, giờ, phút
+    return year, month, day, hour, minute
+
+## ====================================================================================================================================== ##
+
+
 # Title and description
 st.title("Flight Delay Prediction Interface")
 #st.write("Enter the flight details and relevant parameters to predict if the flight will be delayed.")
 
+
+col1, col2 = st.columns(2)
+
+with col1:
 # Inputs for the parameters
 #carrier_code = st.number_input("Carrier Code (as a number)", min_value=0, step=1, value=0)
-carrier_code = st.selectbox("Carrier Code",[""] + carrier_names)
-# origin_airport = st.number_input("Origin Airport (as a number)", min_value=0, step=1, value=0)
-origin_city = st.selectbox('Origin City', [""] + origin_airport_options)
+    carrier_code = st.selectbox("Carrier Code",[""] + carrier_names)
+    # origin_airport = st.number_input("Origin Airport (as a number)", min_value=0, step=1, value=0)
+    origin_airport = st.selectbox('Origin Airport', [""] + origin_airport_options)
 
-if origin_city:
-    des_options = airport_df[airport_df['origin_city'] == origin_city]['destination_city'].dropna().unique().tolist()
-    des_options.sort()
-    destination_city = st.selectbox('Destination City', [""] + des_options)
-else:
-    destination_city = st.selectbox('Destination City', [""])
+    if origin_airport:
+        des_options = airport_df[airport_df['origin_airport'] == origin_airport]['destination_airport'].dropna().unique().tolist()
+        des_options.sort()
+        destination_airport = st.selectbox('Destination Airport', [""] + des_options)
+    else:
+        destination_airport = st.selectbox('Destination Airport', [""])
 
+    filtered_df  = airport_df[
+        (airport_df["origin_airport"] == origin_airport) &
+        (airport_df["destination_airport"] == destination_airport)]
 
-# destination_airport = st.selectbox('Destination Airport', [""] + des_options)
+    if not filtered_df.empty:
+        scheduled_elapsed_time = filtered_df["time_flights"].iloc[0]
+    else:
+        scheduled_elapsed_time = 0
+
+    scheduled = st.date_input('Departure Date', value = date.today())
+
+    year = scheduled.year
+    month = scheduled.month
+    day = scheduled.day
+    weekday = scheduled.weekday()
+
+    # scheduled_departure_time = st.number_input("Scheduled Departure Time (24-hour format)", min_value=0, max_value=2359, step=1, value=0)
+
+    dep_time = st.time_input("Select flight time (24-hour format) - (HH\:mm)")
+    hour = dep_time.hour
+    minute = dep_time.minute
+    scheduled_departure_time = hour * 60 + minute
 
     
-# destination_airport = st.number_input("Destination Airport (as a number)", min_value=0, step=1, value=0)
+    scheduled_arrival_time = scheduled_departure_time + scheduled_elapsed_time
+    if scheduled_arrival_time > 1440:
+        scheduled_arrival_time = scheduled_arrival_time - 1440 
+    
+## ====================================================================================================================================== ##
+## Xử lý thời tiết
+
+    # Thời tiết tại sân bay khởi hành
+    HourlyVisibility_x, HourlyDryBulbTemperature_x, HourlyPrecipitation_x, HourlyStationPressure_x, HourlyWindSpeed_x = 0, 0, 0, 0, 0
+    if origin_airport: 
+        origin_coords = airport_df[airport_df['origin_airport'] == origin_airport][['origin_lat', 'origin_lon']].iloc[0]
+
+        origin_lat = origin_coords['origin_lat']
+        origin_lon = origin_coords['origin_lon']
+        # year, month, day, hour, minute = 2024, 12, 20, 17, 30
+
+        result_x = extract_mean_weather(API_KEY, origin_lat, origin_lon, year, month, day, hour, minute)
+        
+        HourlyVisibility_x = result_x[0]
+        HourlyDryBulbTemperature_x = result_x[1]
+        HourlyPrecipitation_x = result_x[2]
+        HourlyStationPressure_x = result_x[3]
+        HourlyWindSpeed_x = result_x[4]
+
+    # Thời tiết tại sân bay khởi hành
+    HourlyVisibility_y, HourlyDryBulbTemperature_y, HourlyPrecipitation_y, HourlyStationPressure_y, HourlyWindSpeed_y = 0, 0, 0, 0, 0
+    if destination_airport:
+        destination_coords = airport_df[airport_df['destination_airport'] == destination_airport][['destination_lat', 'destination_lon']]
+
+        destination_lat = destination_coords.iloc[0]['destination_lat']
+        destination_lon = destination_coords.iloc[0]['destination_lon']
+        year_y, month_y, day_y, hour_y, minute_y = convert_time(scheduled, dep_time, scheduled_elapsed_time)
+
+        result_y = extract_mean_weather(API_KEY, origin_lat, origin_lon, year_y, month_y, day_y, hour_y, minute_y)
+        
+        HourlyVisibility_y = result_y[0]
+        HourlyDryBulbTemperature_y = result_y[1]
+        HourlyPrecipitation_y = result_y[2]
+        HourlyStationPressure_y = result_y[3]
+        HourlyWindSpeed_y = result_y[4]
+
+## ====================================================================================================================================== ##
+    
+    if weekday == 5 or weekday == 6:
+        is_weekend = 1
+    else:
+        is_weekend = 0
+        
+        
+    holiday = ['1-1', '7-4', '11-11', '11-28', '12-25']
+    scheduled_mmdd = f"{scheduled.month}-{scheduled.day}"
+    
+    if scheduled_mmdd in holiday:
+        is_holiday = 1
+    else: 
+        is_holiday = 0
+
+## ====================================================================================================================================== ##
+
+    flights_per_day = 22693   # median          #st.number_input("Flights Per Day", min_value=0, step=1, value=0)
+    delay_rate_last_month = 0.21362 #median     #st.number_input("Delay Rate Last Month", min_value=0.0, max_value=1.0, step=0.01, value=0.0)
+
+with col2:
+    if origin_airport and destination_airport:
+    # Extract coordinates for origin and destination based on the selected city
+        origin_coords = airport_df[airport_df['origin_airport'] == origin_airport][['origin_lat', 'origin_lon']].iloc[0]
+        destination_coords = airport_df[airport_df['destination_airport'] == destination_airport][['destination_lat', 'destination_lon']].iloc[0]
+
+        # Coordinates for the map (origin and destination)
+        origin_coords = (origin_coords['origin_lat'], origin_coords['origin_lon'])
+        destination_coords = (destination_coords['destination_lat'], destination_coords['destination_lon'])
+
+        # Create a folium map centered on the origin
+        flight_map = folium.Map(location=origin_coords, zoom_start=5)
 
 
-filtered_df  = airport_df[
-    (airport_df["origin_city"] == origin_city) &
-    (airport_df["destination_city"] == destination_city)]
+        # Add markers for the origin and destination airports
+        folium.Marker(location=origin_coords, popup=f"Origin: {origin_airport}").add_to(flight_map)
+        folium.Marker(location=destination_coords, popup=f"Destination: {destination_airport}").add_to(flight_map) 
+      
+        # Draw a polyline for the flight path
+        folium.PolyLine([origin_coords, destination_coords], color="red", weight=2.5, opacity=1).add_to(flight_map)
 
-if not filtered_df.empty:
-    scheduled_elapsed_time = filtered_df["time_flights"].iloc[0]
-else:
-    scheduled_elapsed_time = 0
+        # Convert the folium map to an HTML string
+        map_html = flight_map._repr_html_()
 
-year = st.number_input("Year", min_value=2000, step=1, value=2024)
-month = st.number_input("Month", min_value=1, max_value=12, step=1, value=1)
-day = st.number_input("Day", min_value=1, max_value=31, step=1, value=1)
-weekday = st.number_input("Weekday (0=Monday, 6=Sunday)", min_value=0, max_value=6, step=1, value=0)
-HourlyDryBulbTemperature_x = st.number_input("Hourly Dry Bulb Temperature (Origin)", value=0.0)
-HourlyPrecipitation_x = st.number_input("Hourly Precipitation (Origin)", value=0.0)
-HourlyStationPressure_x = st.number_input("Hourly Station Pressure (Origin)", value=0.0)
-HourlyVisibility_x = st.number_input("Hourly Visibility (Origin)", value=0.0)
-HourlyWindSpeed_x = st.number_input("Hourly Wind Speed (Origin)", value=0.0)
-HourlyDryBulbTemperature_y = st.number_input("Hourly Dry Bulb Temperature (Destination)", value=0.0)
-HourlyPrecipitation_y = st.number_input("Hourly Precipitation (Destination)", value=0.0)
-HourlyStationPressure_y = st.number_input("Hourly Station Pressure (Destination)", value=0.0)
-HourlyVisibility_y = st.number_input("Hourly Visibility (Destination)", value=0.0)
-HourlyWindSpeed_y = st.number_input("Hourly Wind Speed (Destination)", value=0.0)
-is_weekend = st.selectbox("Is Weekend", options=[0, 1])
-scheduled_departure_time = st.number_input("Scheduled Departure Time (24-hour format)", min_value=0, max_value=2359, step=1, value=0)
-scheduled_arrival_time = st.number_input("Scheduled Arrival Time (24-hour format)", min_value=0, max_value=2359, step=1, value=0)
-is_holiday = st.selectbox("Is Holiday", options=[0, 1])
-flights_per_day = st.number_input("Flights Per Day", min_value=0, step=1, value=0)
-delay_rate_last_month = st.number_input("Delay Rate Last Month", min_value=0.0, max_value=1.0, step=0.01, value=0.0)
-
-
-
-
+        # Display the map in Streamlit
+        st.components.v1.html(map_html, width=600, height=400)
+    
 #code = carrier_code_dict[carrier_code]
 
 # Create a DataFrame for prediction
 input_data = {
     "carrier_code": carrier_code,
-    "origin_airport": origin_city,
-    "destination_airport": destination_city,
+    "origin_airport": origin_airport,
+    "destination_airport": destination_airport,
     "scheduled_elapsed_time": scheduled_elapsed_time,
     "year": year,
     "month": month,
@@ -168,14 +362,10 @@ input_data = {
     "delay_rate_last_month": delay_rate_last_month,
 }
 
+st.write('Data')
 input_df = pd.DataFrame([input_data])
+st.write(input_df)
 
-# Display the input parameters as a DataFrame
-if st.button("Show Input Summary"):
-    st.write(input_df)
-    
-# Xử lý data
-# input_data['carrier_code'] = carrier_code_dict[carrier_code]
 
 if carrier_code in carrier_code_dict:
     input_data['carrier_code'] = carrier_code_dict[carrier_code]
@@ -183,36 +373,44 @@ else:
     # Handle the case where the carrier_code is missing or invalid
     input_data['carrier_code'] = None  # Or provide a default value
     
-    
-# origin_airport = airport_df[airport_df['origin_city'] == origin_city]['origin_airport'].iloc[0]
-# input_data['origin_airport'] = airport_dict[origin_airport]
 
-filtered_origin_df = airport_df[airport_df['origin_city'] == origin_city]
-
-# Check if the filtered DataFrame is empty
-if not filtered_origin_df.empty:
-    # Get the origin airport from the filtered DataFrame
-    origin_airport = filtered_origin_df['origin_airport'].iloc[0]
+if origin_airport in airport_dict:
     input_data['origin_airport'] = airport_dict[origin_airport]
 else:
-    # Handle the case where no matching origin city is found
-    origin_airport = None
-    input_data['origin_airport'] = None
-
-# destination_airport = airport_df[airport_df['destination_city'] == destination_city]['destination_airport'].iloc[0]
-# input_data['destination_airport'] = airport_dict[destination_airport]
-
-filtered_df = airport_df[airport_df['destination_city'] == destination_city]
-
-# Check if the filtered DataFrame is empty
-if not filtered_df.empty:
-    # Get the destination airport from the filtered DataFrame
-    destination_airport = filtered_df['destination_airport'].iloc[0]
+    # Handle the case where the carrier_code is missing or invalid
+    input_data['origin_airport'] = None  # Or provide a default value
+    
+if destination_airport in airport_dict:
     input_data['destination_airport'] = airport_dict[destination_airport]
 else:
-    # Handle the case where no matching destination city is found
-    destination_airport = None
+    # Handle the case where the carrier_code is missing or invalid
     input_data['destination_airport'] = None  # Or provide a default value
+    
+    
+# filtered_origin_df = airport_df[airport_df['origin_city'] == origin_city]
+
+# # Check if the filtered DataFrame is empty
+# if not filtered_origin_df.empty:
+#     # Get the origin airport from the filtered DataFrame
+#     origin_airport = filtered_origin_df['origin_airport'].iloc[0]
+#     input_data['origin_airport'] = airport_dict[origin_airport]
+# else:
+#     # Handle the case where no matching origin city is found
+#     origin_airport = None
+#     input_data['origin_airport'] = None
+
+
+# filtered_df = airport_df[airport_df['destination_city'] == destination_city]
+
+# # Check if the filtered DataFrame is empty
+# if not filtered_df.empty:
+#     # Get the destination airport from the filtered DataFrame
+#     destination_airport = filtered_df['destination_airport'].iloc[0]
+#     input_data['destination_airport'] = airport_dict[destination_airport]
+# else:
+#     # Handle the case where no matching destination city is found
+#     destination_airport = None
+#     input_data['destination_airport'] = None  # Or provide a default value
     
 input_df = pd.DataFrame([input_data])
    
