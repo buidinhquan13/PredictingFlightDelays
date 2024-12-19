@@ -12,10 +12,7 @@ origin_airport_options.sort()
 destination_airport_options = airport_df['destination_city'].dropna().unique().tolist()
 destination_airport_options.sort()
 
-# Load the pre-trained model
-with open('CatBoost_model.pkl', 'rb') as model_file:
-    model = pickle.load(model_file)
-    
+model = joblib.load('CatBoost_model.pkl')
     
 ## Dictionary for carrier code
 carrier_names = ["American Airlines (AA)", "Alaska Airlines (AS)", "JetBlue Airways (B6)", "Delta Air Lines (DL)", "Frontier Airlines (F9)", 
