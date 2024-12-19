@@ -1,2 +1,5 @@
 streamlit
-pickle
+scikit-learn==1.5.2
+joblib
+numpy
+pandas
